@@ -1,13 +1,19 @@
+# Создание нового пространства имен для изоляции ресурсов приложения
+# Пространства имен помогают организовать ресурсы в кластере и предотвращают конфликты имен между разными приложениями
 apiVersion: v1
 kind: Namespace
 metadata:
   name: go-app-namespace
+
+# Определение Deployment для Go-приложения
+# Deployment обеспечивает декларативное обновление Pod'ов и ReplicaSets
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: go-server-deployment
   namespace: go-app-namespace
 spec:
+  # Установка количества реплик для обеспечения доступности и нагрузки
   replicas: 2
   selector:
     matchLabels:
@@ -17,37 +23,42 @@ spec:
       labels:
         app: go-server
     spec:
+      # Настройки аффинити обеспечивают оптимальное распределение и балансировку подов по узлам и зонам доступности
       affinity:
+        # podAntiAffinity помогает распределить поды по разным узлам для повышения отказоустойчивости
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchExpressions:
-                  - key: "app"
-                    operator: In
-                    values:
-                    - go-server
-              topologyKey: "kubernetes.io/hostname"
+          - labelSelector:
+              matchExpressions:
+              - key: "app"
+                operator: In
+                values:
+                - go-server
+            topologyKey: "kubernetes.io/hostname"
+        # podAffinity предпочитает распределение подов в одной зоне доступности
         podAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchExpressions:
-                  - key: "app"
-                    operator: In
-                    values:
-                    - go-server
-                topologyKey: "topology.kubernetes.io/zone"
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: "app"
+                  operator: In
+                  values:
+                  - go-server
+              topologyKey: "topology.kubernetes.io/zone"
       containers:
       - name: go-server-container
         image: go-app-image:latest
+        # Указание запросов и лимитов ресурсов для управления использованием CPU и памяти
         resources:
           requests:
             memory: "128Mi"
-            cpu: "100m"  
+            cpu: "100m" # Нормальное потребление CPU
           limits:
             memory: "128Mi"
-            cpu: "1000m" 
+            cpu: "1000m" # Пиковое потребление CPU
+        # Настройки проб для проверки состояния и готовности приложения
         livenessProbe:
           httpGet:
             path: /healthz
@@ -65,44 +76,48 @@ spec:
             path: /start
             port: 8080
           failureThreshold: 30
-          periodSeconds: 10 
+          periodSeconds: 10 # Учитывает время инициализации приложения
 
+# CronJob для увеличения количества подов в пиковые часы
+# Автоматически увеличивает количество подов, чтобы справиться с утренней пиковой нагрузкой
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: go-app-scale-up-cron-job
   namespace: go-app-namespace
 spec:
-  schedule: "0 7 * * *"
+  schedule: "0 7 * * *" # Каждый день в 7 утра
   jobTemplate:
     spec:
       template:
         spec:
           containers:
           - name: scale-up-container
-            image: bitnami/kubectl:latest
+            image: bitnami/kubectl:latest # Использует kubectl для масштабирования
             command:
-              - /bin/bash
-              - -c
-              - kubectl scale --replicas=4 deployment/go-server-deployment --namespace go-app-namespace
+            - /bin/bash
+            - -c
+            - kubectl scale --replicas=4 deployment/go-server-deployment --namespace go-app-namespace
           restartPolicy: OnFailure
 
+# CronJob для уменьшения количества подов в непиковые часы
+# Уменьшает количество подов вечером, когда нагрузка на приложение снижается
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: go-app-scale-down-cron-job
   namespace: go-app-namespace
 spec:
-  schedule: "0 23 * * *"
+  schedule: "0 23 * * *" # Каждый день в 11 вечера
   jobTemplate:
     spec:
       template:
         spec:
           containers:
           - name: scale-down-container
-            image: bitnami/kubectl:latest
+            image: bitnami/kubectl:latest # Использует kubectl для масштабирования
             command:
-              - /bin/bash
-              - -c
-              - kubectl scale --replicas=2 deployment/go-server-deployment --namespace go-app-namespace
+            - /bin/bash
+            - -c
+            - kubectl scale --replicas=2 deployment/go-server-deployment --namespace go-app-namespace
           restartPolicy: OnFailure
